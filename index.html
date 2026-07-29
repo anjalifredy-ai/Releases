@@ -14,6 +14,8 @@
     --muted: #8c8c93;
     --accent: #ff5a1f;
     --accent-dim: #7a2c0f;
+    --green: #6adf8a;
+    --red: #ff5c5c;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
@@ -25,7 +27,7 @@
   }
 
   header{
-    padding: 28px 20px 20px;
+    padding: 28px 20px 16px;
     border-bottom: 1px solid var(--line);
     position: sticky;
     top: 0;
@@ -71,11 +73,91 @@
   }
   .stats b{ color: var(--text); }
 
+  .top-actions{
+    margin-top: 16px;
+    display:flex;
+    gap: 10px;
+  }
+  .upload-toggle{
+    flex: 1;
+    background: var(--accent);
+    color: #0b0b0d;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .upload-toggle:active{ transform: scale(0.98); }
+
   main{
     padding: 8px 14px 60px;
     max-width: 720px;
     margin: 0 auto;
   }
+
+  /* Upload panel */
+  .upload-panel{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+    margin: 16px 8px 8px;
+    display: none;
+  }
+  .upload-panel.open{ display: block; }
+  .upload-panel h3{
+    margin: 0 0 14px;
+    font-size: 16px;
+  }
+  .field{
+    margin-bottom: 12px;
+  }
+  .field label{
+    display:block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field input[type="text"],
+  .field input[type="password"]{
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 11px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+  .field input[type="file"]{
+    width: 100%;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .submit-btn{
+    width: 100%;
+    background: var(--accent);
+    color: #0b0b0d;
+    border: none;
+    padding: 13px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14.5px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .submit-btn:disabled{
+    opacity: 0.5;
+  }
+  .upload-msg{
+    margin-top: 10px;
+    font-size: 13px;
+    text-align: center;
+  }
+  .upload-msg.ok{ color: var(--green); }
+  .upload-msg.err{ color: var(--red); }
 
   .group-label{
     font-size: 11px;
@@ -149,15 +231,20 @@
     cursor: pointer;
     transition: transform 0.1s ease, background 0.15s ease, color 0.15s ease;
     -webkit-tap-highlight-color: transparent;
+    text-decoration: none;
+    display:inline-block;
   }
   .dl-btn:active{
     transform: scale(0.94);
     background: var(--accent);
     color: #0b0b0d;
   }
-  .dl-btn.done{
-    color: #6adf8a;
-    border-color: #234d33;
+
+  .empty-note{
+    text-align:center;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 30px 20px;
   }
 
   footer{
@@ -181,126 +268,102 @@
   <div class="stats">
     <span><b id="countInstalled">0</b> installed set</span>
     <span><b id="countUninstalled">0</b> uninstalled set</span>
-    <span><b id="totalSize">0</b> total</span>
+    <span><b id="countUploaded">0</b> community</span>
+  </div>
+  <div class="top-actions">
+    <button class="upload-toggle" id="uploadToggle">+ Upload App</button>
   </div>
 </header>
 
-<main id="app"></main>
+<main>
+  <div class="upload-panel" id="uploadPanel">
+    <h3>Publish an app</h3>
+    <form id="uploadForm">
+      <div class="field">
+        <label>App name</label>
+        <input type="text" id="appName" placeholder="e.g. My Cool App" required>
+      </div>
+      <div class="field">
+        <label>Version (optional)</label>
+        <input type="text" id="appVersion" placeholder="e.g. 1.0.0">
+      </div>
+      <div class="field">
+        <label>APK file</label>
+        <input type="file" id="apkFile" accept=".apk" required>
+      </div>
+      <div class="field">
+        <label>Upload PIN</label>
+        <input type="password" id="uploadPin" placeholder="Enter PIN" required>
+      </div>
+      <button type="submit" class="submit-btn" id="submitBtn">Publish</button>
+      <div class="upload-msg" id="uploadMsg"></div>
+    </form>
+  </div>
+
+  <div id="app"></div>
+</main>
 
 <footer>RemonStore — personal APK library</footer>
 
 <script>
-// ---- App data ----
-// Edit `url` for each app to your real GitHub Release asset link once uploaded.
-// Until then it points to "#" and the button will show a friendly notice.
+// ---- Pre-seeded apps (from GitHub Releases) ----
 const RELEASE_BASE = "https://github.com/anjalifredy-ai/Releases/releases/download/Remo/";
 
-const apps = [
-  {
-    name: "NetMirror",
-    version: "3.0",
-    size: "51.71 MB",
-    group: "uninstalled",
-    color: "#c0272d",
-    letter: "N",
-    url: RELEASE_BASE + "NetMirror.apk"
-  },
-  {
-    name: "ShowCase",
-    version: "4.7",
-    size: "5.53 MB",
-    group: "uninstalled",
-    color: "#1f3a5f",
-    letter: "S",
-    url: RELEASE_BASE + "showcase-v4.7.apk"
-  },
-  {
-    name: "Vencord",
-    version: "1.0.6",
-    size: "1.24 MB",
-    group: "uninstalled",
-    color: "#e6b8b0",
-    letter: "V",
-    url: RELEASE_BASE + "Vencord-v1.0.6.apk"
-  },
-  {
-    name: "SlimSocial for Instagram",
-    version: "1.0",
-    size: "1.08 MB",
-    group: "uninstalled",
-    color: "#c2185b",
-    letter: "S",
-    url: RELEASE_BASE + "app-release.1.apk"
-  },
-  {
-    name: "Materialbook",
-    version: "1.0.0",
-    size: "1.70 MB",
-    group: "uninstalled",
-    color: "#7d9bd4",
-    letter: "n",
-    url: RELEASE_BASE + "Materialbook_v1.0.0.apk"
-  },
-  {
-    name: "Mirarr",
-    version: "3.3.2",
-    size: "69.91 MB",
-    group: "installed",
-    color: "#e0d4b0",
-    letter: "M",
-    url: RELEASE_BASE + "app-release.apk"
-  },
-  {
-    name: "YouTube Pro",
-    version: "3.98",
-    size: "122 KB",
-    group: "installed",
-    color: "#d32f2f",
-    letter: "Y",
-    url: RELEASE_BASE + "YTPRO.apk"
-  },
-  {
-    name: "Telegram X",
-    version: "0.28.1.1771",
-    size: "52.65 MB",
-    group: "installed",
-    color: "#2f4a5e",
-    letter: "T",
-    url: RELEASE_BASE + "Telegram-X-0.28.1.1771.apk"
-  },
-  {
-    name: "RiMusic",
-    version: "0.6.72.1",
-    size: "18.58 MB",
-    group: "installed",
-    color: "#2e8b57",
-    letter: "R",
-    url: RELEASE_BASE + "app-foss-release.apk"
-  },
-  {
-    name: "LitePipe",
-    version: "1.2.1",
-    size: "6.20 MB",
-    group: "installed",
-    color: "#8b1a1a",
-    letter: "L",
-    url: RELEASE_BASE + "LitePipev1.2.1-arm64-v8a.apk"
-  }
+const staticApps = [
+  { name: "NetMirror", version: "3.0", size: "51.71 MB", group: "uninstalled", color: "#c0272d", letter: "N", url: RELEASE_BASE + "NetMirror.apk" },
+  { name: "ShowCase", version: "4.7", size: "5.53 MB", group: "uninstalled", color: "#1f3a5f", letter: "S", url: RELEASE_BASE + "showcase-v4.7.apk" },
+  { name: "Vencord", version: "1.0.6", size: "1.24 MB", group: "uninstalled", color: "#e6b8b0", letter: "V", url: RELEASE_BASE + "Vencord-v1.0.6.apk" },
+  { name: "SlimSocial for Instagram", version: "1.0", size: "1.08 MB", group: "uninstalled", color: "#c2185b", letter: "S", url: RELEASE_BASE + "app-release.1.apk" },
+  { name: "Materialbook", version: "1.0.0", size: "1.70 MB", group: "uninstalled", color: "#7d9bd4", letter: "n", url: RELEASE_BASE + "Materialbook_v1.0.0.apk" },
+  { name: "Mirarr", version: "3.3.2", size: "69.91 MB", group: "installed", color: "#e0d4b0", letter: "M", url: RELEASE_BASE + "app-release.apk" },
+  { name: "YouTube Pro", version: "3.98", size: "122 KB", group: "installed", color: "#d32f2f", letter: "Y", url: RELEASE_BASE + "YTPRO.apk" },
+  { name: "Telegram X", version: "0.28.1.1771", size: "52.65 MB", group: "installed", color: "#2f4a5e", letter: "T", url: RELEASE_BASE + "Telegram-X-0.28.1.1771.apk" },
+  { name: "RiMusic", version: "0.6.72.1", size: "18.58 MB", group: "installed", color: "#2e8b57", letter: "R", url: RELEASE_BASE + "app-foss-release.apk" },
+  { name: "LitePipe", version: "1.2.1", size: "6.20 MB", group: "installed", color: "#8b1a1a", letter: "L", url: RELEASE_BASE + "LitePipev1.2.1-arm64-v8a.apk" }
 ];
 
-function render(){
+const palette = ["#c0272d","#1f3a5f","#e6b8b0","#c2185b","#7d9bd4","#e0d4b0","#d32f2f","#2f4a5e","#2e8b57","#8b1a1a","#5e35b1","#00838f"];
+function colorFor(name){
+  let hash = 0;
+  for(let i=0;i<name.length;i++) hash = name.charCodeAt(i) + ((hash<<5)-hash);
+  return palette[Math.abs(hash) % palette.length];
+}
+
+let uploadedApps = [];
+
+async function loadUploadedApps(){
+  try{
+    const r = await fetch('/api/apps');
+    if(!r.ok) return [];
+    const data = await r.json();
+    return data.map(a => ({
+      name: a.name,
+      version: a.version || '1.0',
+      size: a.size,
+      group: 'community',
+      color: colorFor(a.name),
+      letter: a.name.trim()[0]?.toUpperCase() || 'A',
+      url: a.url
+    }));
+  }catch(e){
+    return [];
+  }
+}
+
+function render(allApps){
   const app = document.getElementById('app');
   app.innerHTML = '';
 
   const groups = [
     { key: 'installed', label: 'Installed' },
-    { key: 'uninstalled', label: 'Uninstalled' }
+    { key: 'uninstalled', label: 'Uninstalled' },
+    { key: 'community', label: 'Community Uploads' }
   ];
 
-  let installedCount = 0, uninstalledCount = 0, totalMB = 0;
+  let installedCount = 0, uninstalledCount = 0, uploadedCount = 0;
 
   groups.forEach(g => {
-    const items = apps.filter(a => a.group === g.key);
+    const items = allApps.filter(a => a.group === g.key);
     if(items.length === 0) return;
 
     const label = document.createElement('div');
@@ -309,9 +372,9 @@ function render(){
     app.appendChild(label);
 
     items.forEach(a => {
-      if(g.key === 'installed') installedCount++; else uninstalledCount++;
-      const mbMatch = a.size.match(/([\d.]+)\s*MB/);
-      if(mbMatch) totalMB += parseFloat(mbMatch[1]);
+      if(g.key === 'installed') installedCount++;
+      else if(g.key === 'uninstalled') uninstalledCount++;
+      else uploadedCount++;
 
       const row = document.createElement('div');
       row.className = 'app-row';
@@ -325,7 +388,7 @@ function render(){
             <span>v${a.version}</span>
           </div>
         </div>
-        <button class="dl-btn" data-name="${a.name}" data-url="${a.url}">Get</button>
+        <a class="dl-btn" href="${a.url}" download>Get</a>
       `;
       app.appendChild(row);
     });
@@ -333,33 +396,84 @@ function render(){
 
   document.getElementById('countInstalled').textContent = installedCount;
   document.getElementById('countUninstalled').textContent = uninstalledCount;
-  document.getElementById('totalSize').textContent = totalMB.toFixed(1) + ' MB';
+  document.getElementById('countUploaded').textContent = uploadedCount;
 
-  document.querySelectorAll('.dl-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const url = btn.getAttribute('data-url');
-      const name = btn.getAttribute('data-name');
-      if(!url || url === '#'){
-        btn.textContent = 'Soon';
-        setTimeout(() => { btn.textContent = 'Get'; }, 1400);
-        return;
-      }
-      // Trigger direct download (GitHub release assets serve with
-      // Content-Disposition: attachment, so this downloads directly
-      // rather than navigating away).
-      window.location.href = url;
-
-      btn.textContent = '✓';
-      btn.classList.add('done');
-      setTimeout(() => {
-        btn.textContent = 'Get';
-        btn.classList.remove('done');
-      }, 2000);
-    });
-  });
+  if(allApps.length === 0){
+    app.innerHTML = '<div class="empty-note">No apps yet. Be the first to publish one.</div>';
+  }
 }
 
-render();
+async function refreshAll(){
+  uploadedApps = await loadUploadedApps();
+  render([...staticApps, ...uploadedApps]);
+}
+
+// ---- Upload panel toggle ----
+document.getElementById('uploadToggle').addEventListener('click', () => {
+  document.getElementById('uploadPanel').classList.toggle('open');
+});
+
+// ---- Upload form submit ----
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const name = document.getElementById('appName').value.trim();
+  const version = document.getElementById('appVersion').value.trim();
+  const pin = document.getElementById('uploadPin').value;
+  const fileInput = document.getElementById('apkFile');
+  const file = fileInput.files[0];
+  const msg = document.getElementById('uploadMsg');
+  const submitBtn = document.getElementById('submitBtn');
+
+  msg.textContent = '';
+  msg.className = 'upload-msg';
+
+  if(!file){
+    msg.textContent = 'Please choose an APK file.';
+    msg.classList.add('err');
+    return;
+  }
+  if(!file.name.toLowerCase().endsWith('.apk')){
+    msg.textContent = 'Only .apk files are allowed.';
+    msg.classList.add('err');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Uploading...';
+
+  try{
+    const formData = new FormData();
+    formData.append('appName', name);
+    formData.append('version', version);
+    formData.append('pin', pin);
+    formData.append('file', file);
+
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+
+    if(!res.ok){
+      msg.textContent = data.error || 'Upload failed.';
+      msg.classList.add('err');
+    } else {
+      msg.textContent = 'Published! It now shows in the list below.';
+      msg.classList.add('ok');
+      document.getElementById('uploadForm').reset();
+      await refreshAll();
+    }
+  } catch(err){
+    msg.textContent = 'Something went wrong. Try again.';
+    msg.classList.add('err');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Publish';
+  }
+});
+
+refreshAll();
 </script>
 
 </body>
