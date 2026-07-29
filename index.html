@@ -159,6 +159,35 @@
   .upload-msg.ok{ color: var(--green); }
   .upload-msg.err{ color: var(--red); }
 
+  .progress-wrap{
+    display: none;
+    margin-top: 12px;
+  }
+  .progress-wrap.show{ display: block; }
+  .progress-track{
+    width: 100%;
+    height: 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  .progress-fill{
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    border-radius: 20px;
+    transition: width 0.15s ease;
+  }
+  .progress-label{
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .progress-label b{ color: var(--accent); }
+
   .group-label{
     font-size: 11px;
     text-transform: uppercase;
@@ -296,6 +325,15 @@
         <input type="password" id="uploadPin" placeholder="Enter PIN" required>
       </div>
       <button type="submit" class="submit-btn" id="submitBtn">Publish</button>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="progress-label">
+          <span id="progressStage">Uploading...</span>
+          <span><b id="progressPercent">0</b>%</span>
+        </div>
+      </div>
       <div class="upload-msg" id="uploadMsg"></div>
     </form>
   </div>
@@ -424,6 +462,10 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
   const file = fileInput.files[0];
   const msg = document.getElementById('uploadMsg');
   const submitBtn = document.getElementById('submitBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressPercent = document.getElementById('progressPercent');
+  const progressStage = document.getElementById('progressStage');
 
   msg.textContent = '';
   msg.className = 'upload-msg';
@@ -441,35 +483,68 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
 
   submitBtn.disabled = true;
   submitBtn.textContent = 'Uploading...';
+  progressWrap.classList.add('show');
+  progressFill.style.width = '0%';
+  progressPercent.textContent = '0';
+  progressStage.textContent = 'Uploading...';
 
-  try{
-    const formData = new FormData();
-    formData.append('appName', name);
-    formData.append('version', version);
-    formData.append('pin', pin);
-    formData.append('file', file);
+  const formData = new FormData();
+  formData.append('appName', name);
+  formData.append('version', version);
+  formData.append('pin', pin);
+  formData.append('file', file);
 
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+
+      xhr.upload.addEventListener('progress', (evt) => {
+        if(evt.lengthComputable){
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          progressFill.style.width = pct + '%';
+          progressPercent.textContent = pct;
+          if(pct >= 100){
+            progressStage.textContent = 'Processing...';
+          }
+        }
+      });
+
+      xhr.onload = () => {
+        let data;
+        try { data = JSON.parse(xhr.responseText); }
+        catch(e){ data = { error: 'Unexpected response from server.' }; }
+
+        if(xhr.status >= 200 && xhr.status < 300){
+          resolve(data);
+        } else {
+          reject(new Error(data.error || 'Upload failed.'));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload.'));
+
+      xhr.send(formData);
     });
-    const data = await res.json();
 
-    if(!res.ok){
-      msg.textContent = data.error || 'Upload failed.';
-      msg.classList.add('err');
-    } else {
-      msg.textContent = 'Published! It now shows in the list below.';
-      msg.classList.add('ok');
-      document.getElementById('uploadForm').reset();
-      await refreshAll();
-    }
+    progressFill.style.width = '100%';
+    progressPercent.textContent = '100';
+    progressStage.textContent = 'Done';
+    msg.textContent = 'Published! It now shows in the list below.';
+    msg.classList.add('ok');
+    document.getElementById('uploadForm').reset();
+    await refreshAll();
   } catch(err){
-    msg.textContent = 'Something went wrong. Try again.';
+    msg.textContent = err.message || 'Something went wrong. Try again.';
     msg.classList.add('err');
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Publish';
+    setTimeout(() => {
+      progressWrap.classList.remove('show');
+      progressFill.style.width = '0%';
+      progressPercent.textContent = '0';
+    }, 1200);
   }
 });
 
