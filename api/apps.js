@@ -1,25 +1,27 @@
 // api/apps.js
-// Returns the current list of uploaded apps (stored as a JSON blob).
+// Returns the current list of uploaded apps, read from apks/apps-index.json
+// in the GitHub repo (no token needed for reading — public repo raw file).
 
-import { list } from '@vercel/blob';
-
-const APPS_INDEX_KEY = "apps-index.json";
+const GITHUB_OWNER = "anjalifredy-ai";
+const GITHUB_REPO = "Releases";
+const GITHUB_BRANCH = "main";
+const APPS_INDEX_PATH = "apks/apps-index.json";
 
 export default async function handler(req, res) {
   try {
-    const { blobs } = await list({ prefix: APPS_INDEX_KEY });
-    const existing = blobs.find(b => b.pathname === APPS_INDEX_KEY);
+    const url = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${APPS_INDEX_PATH}?t=${Date.now()}`;
+    const r = await fetch(url);
 
-    if (!existing) {
+    if (!r.ok) {
+      // Index file doesn't exist yet (no uploads so far) — that's fine.
       res.status(200).json([]);
       return;
     }
 
-    const r = await fetch(existing.url);
     const appsList = await r.json();
     res.status(200).json(appsList);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to load apps', details: String(err) });
+    res.status(200).json([]); // fail soft — show static apps at least
   }
 }
