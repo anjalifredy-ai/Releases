@@ -343,10 +343,6 @@
 
 <footer>RemonStore — personal APK library</footer>
 
-<script type="module">
-import { upload } from 'https://esm.sh/@vercel/blob@0.27.0/client';
-window.__blobUpload = upload;
-</script>
 <script>
 // ---- Pre-seeded apps (from GitHub Releases) ----
 const RELEASE_BASE = "https://github.com/anjalifredy-ai/Releases/releases/download/Remo/";
@@ -492,48 +488,46 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
   progressPercent.textContent = '0';
   progressStage.textContent = 'Uploading...';
 
+  const formData = new FormData();
+  formData.append('appName', name);
+  formData.append('version', version);
+  formData.append('pin', pin);
+  formData.append('file', file);
+
   try {
-    // Wait for the module script to attach the upload helper.
-    let tries = 0;
-    while (!window.__blobUpload && tries < 50) {
-      await new Promise(r => setTimeout(r, 100));
-      tries++;
-    }
-    if (!window.__blobUpload) throw new Error('Upload tool failed to load. Refresh and try again.');
+    const data = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
 
-    const safeFilename = `apks/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
-
-    const blobResult = await window.__blobUpload(safeFilename, file, {
-      access: 'public',
-      handleUploadUrl: '/api/upload',
-      clientPayload: JSON.stringify({ pin, appName: name, version }),
-      onUploadProgress: (evt) => {
-        const pct = Math.round(evt.percentage);
-        progressFill.style.width = pct + '%';
-        progressPercent.textContent = pct;
-        if (pct >= 100) {
-          progressStage.textContent = 'Finishing up (saving info)...';
-        } else if (pct >= 90) {
-          progressStage.textContent = 'Almost there...';
+      xhr.upload.addEventListener('progress', (evt) => {
+        if(evt.lengthComputable){
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          progressFill.style.width = pct + '%';
+          progressPercent.textContent = pct;
+          if(pct >= 100){
+            progressStage.textContent = 'Publishing to GitHub...';
+          } else if(pct >= 90){
+            progressStage.textContent = 'Almost there...';
+          }
         }
-      },
-    });
+      });
 
-    const sizeMB = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+      xhr.onload = () => {
+        let parsed;
+        try { parsed = JSON.parse(xhr.responseText); }
+        catch(e){ parsed = { error: 'Unexpected response from server.' }; }
 
-    const addRes = await fetch('/api/apps-add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pin,
-        appName: name,
-        version,
-        size: sizeMB,
-        url: blobResult.url,
-      }),
+        if(xhr.status >= 200 && xhr.status < 300){
+          resolve(parsed);
+        } else {
+          reject(new Error(parsed.error || 'Upload failed.'));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during upload.'));
+
+      xhr.send(formData);
     });
-    const addData = await addRes.json();
-    if (!addRes.ok) throw new Error(addData.error || 'Could not save app info.');
 
     progressFill.style.width = '100%';
     progressPercent.textContent = '100';
