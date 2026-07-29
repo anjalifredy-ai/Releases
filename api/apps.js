@@ -8,9 +8,11 @@ const GITHUB_BRANCH = "main";
 const APPS_INDEX_PATH = "apks/apps-index.json";
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+
   try {
     const url = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${APPS_INDEX_PATH}?t=${Date.now()}`;
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: 'no-store' });
 
     if (!r.ok) {
       // Index file doesn't exist yet (no uploads so far) — that's fine.
