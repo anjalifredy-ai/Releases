@@ -16,7 +16,6 @@ const UPLOAD_PIN = "Remon b";
 const GITHUB_OWNER = "anjalifredy-ai";
 const GITHUB_REPO = "Releases";
 const GITHUB_BRANCH = "main";
-const APPS_INDEX_PATH = "apks/apps-index.json";
 
 // --- tiny multipart/form-data parser (no external deps) ---
 async function parseMultipart(req) {
@@ -64,17 +63,6 @@ async function githubRequest(path, options = {}) {
     },
   });
   return res;
-}
-
-async function getFileSha(path) {
-  const res = await githubRequest(
-    `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}?ref=${GITHUB_BRANCH}`
-  );
-  if (res.status === 200) {
-    const data = await res.json();
-    return data.sha;
-  }
-  return null; // file doesn't exist yet
 }
 
 async function putFile(path, base64Content, message, sha) {
@@ -125,44 +113,22 @@ export default async function handler(req, res) {
     }
 
     const appName = (fields.appName || file.filename.replace(/\.apk$/i, '')).trim();
-    const version = (fields.version || '1.0').trim();
 
-    // Commit the APK file into apks/ in the repo
-    const safeName = `${Date.now()}-${file.filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+    // Commit the APK file into apks/ in the repo.
+    // apps.js scans this folder directly, so no separate index bookkeeping needed.
+    const safeName = `${Date.now()}-${appName.replace(/[^a-zA-Z0-9.\-_]/g, '_')}.apk`;
     const apkPath = `apks/${safeName}`;
     const base64Content = file.buffer.toString('base64');
 
     await putFile(apkPath, base64Content, `Add ${appName} via RemonStore upload`);
 
     const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${apkPath}`;
-
-    // Update the apps index (read existing -> append -> write back)
-    let appsList = [];
-    const existingSha = await getFileSha(APPS_INDEX_PATH);
-    if (existingSha) {
-      const getRes = await githubRequest(
-        `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${APPS_INDEX_PATH}?ref=${GITHUB_BRANCH}`
-      );
-      const data = await getRes.json();
-      const content = Buffer.from(data.content, 'base64').toString('utf-8');
-      try { appsList = JSON.parse(content); } catch (e) { appsList = []; }
-    }
-
     const sizeMB = (file.buffer.length / (1024 * 1024)).toFixed(2) + ' MB';
-    const newApp = {
-      id: safeName,
-      name: appName,
-      version,
-      size: sizeMB,
-      url: rawUrl,
-      uploadedAt: new Date().toISOString(),
-    };
-    appsList.unshift(newApp);
 
-    const newIndexBase64 = Buffer.from(JSON.stringify(appsList, null, 2)).toString('base64');
-    await putFile(APPS_INDEX_PATH, newIndexBase64, `Update apps index: add ${appName}`, existingSha);
-
-    res.status(200).json({ success: true, app: newApp });
+    res.status(200).json({
+      success: true,
+      app: { name: appName, size: sizeMB, url: rawUrl },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Upload failed' });
