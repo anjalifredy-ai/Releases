@@ -343,6 +343,10 @@
 
 <footer>RemonStore — personal APK library</footer>
 
+<script type="module">
+import { upload } from 'https://esm.sh/@vercel/blob@0.27.0/client?bundle';
+window.__blobUpload = upload;
+</script>
 <script>
 // ---- Pre-seeded apps (from GitHub Releases) ----
 const RELEASE_BASE = "https://github.com/anjalifredy-ai/Releases/releases/download/Remo/";
