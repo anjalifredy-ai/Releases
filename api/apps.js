@@ -1,11 +1,12 @@
 // api/apps.js
 // Returns the current list of apps by combining TWO sources:
-//  1. apks/ folder in the repo — small apps uploaded via the website form
-//     (via api/upload.js), any size up to Vercel's ~4MB function limit.
+//  1. apks/<folder>/ subfolders in the repo — each app uploaded via the
+//     website form (via api/upload.js) lives in its own folder with the
+//     APK, an optional metadata.json (description + screenshots), and a
+//     screenshots/ folder.
 //  2. GitHub Release assets under tag "Remo" — big apps (Telegram X,
-//     Mirarr, NetMirror, etc.) that get dropped in manually since
-//     GitHub Releases allow up to 2GB per file.
-// No separate "index" bookkeeping needed — these two listings ARE the list.
+//     Mirarr, NetMirror, etc.) dropped in manually since GitHub Releases
+//     allow up to 2GB per file.
 
 const GITHUB_OWNER = "anjalifredy-ai";
 const GITHUB_REPO = "Releases";
@@ -20,35 +21,79 @@ function humanSize(bytes) {
   return mb.toFixed(2) + " MB";
 }
 
-// Turn "1753800000000-Telegram_X.apk" or "NetMirror.apk" into a
-// friendlier "Telegram X" / "NetMirror"
 function prettyName(filename) {
   let name = filename.replace(/\.apk$/i, "");
-  name = name.replace(/^\d{10,}-/, ""); // strip leading timestamp (website uploads)
+  name = name.replace(/^\d{10,}-/, "");
   name = name.replace(/[_\-]+/g, " ").trim();
   return name || filename;
 }
 
+async function ghFetch(path) {
+  const url = `https://api.github.com${path}`;
+  const r = await fetch(url, {
+    headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'RemonStore' },
+    cache: 'no-store',
+  });
+  return r;
+}
+
+// New per-app-folder structure: apks/<folder>/<name>.apk, metadata.json, screenshots/
 async function getFolderApps() {
   try {
-    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${APKS_FOLDER}?ref=${GITHUB_BRANCH}`;
-    const r = await fetch(url, {
-      headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'RemonStore' },
-      cache: 'no-store',
-    });
+    const r = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${APKS_FOLDER}?ref=${GITHUB_BRANCH}`);
     if (!r.ok) return [];
     const items = await r.json();
     if (!Array.isArray(items)) return [];
 
-    return items
-      .filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.apk'))
-      .map(f => ({
-        id: f.sha,
-        name: prettyName(f.name),
-        size: humanSize(f.size),
-        url: `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${APKS_FOLDER}/${f.name}`,
-        source: 'folder',
-      }));
+    const results = [];
+
+    for (const item of items) {
+      // Legacy: a bare .apk file directly in apks/ (from the older flat scheme)
+      if (item.type === 'file' && item.name.toLowerCase().endsWith('.apk')) {
+        results.push({
+          id: item.sha,
+          name: prettyName(item.name),
+          size: humanSize(item.size),
+          url: `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${APKS_FOLDER}/${item.name}`,
+          description: '',
+          screenshots: [],
+          source: 'folder',
+        });
+        continue;
+      }
+
+      // New: a per-app subfolder
+      if (item.type === 'dir') {
+        const subR = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${item.path}?ref=${GITHUB_BRANCH}`);
+        if (!subR.ok) continue;
+        const subItems = await subR.json();
+        if (!Array.isArray(subItems)) continue;
+
+        const apkEntry = subItems.find(f => f.type === 'file' && f.name.toLowerCase().endsWith('.apk'));
+        if (!apkEntry) continue;
+
+        let metadata = {};
+        const metaEntry = subItems.find(f => f.name === 'metadata.json');
+        if (metaEntry) {
+          try {
+            const metaR = await fetch(`https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${item.path}/metadata.json`, { cache: 'no-store' });
+            if (metaR.ok) metadata = await metaR.json();
+          } catch (e) { /* ignore, fall back to defaults */ }
+        }
+
+        results.push({
+          id: apkEntry.sha,
+          name: metadata.name || prettyName(apkEntry.name),
+          size: metadata.size || humanSize(apkEntry.size),
+          url: `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${item.path}/${apkEntry.name}`,
+          description: metadata.description || '',
+          screenshots: Array.isArray(metadata.screenshots) ? metadata.screenshots : [],
+          source: 'folder',
+        });
+      }
+    }
+
+    return results;
   } catch (e) {
     console.error('getFolderApps error:', e);
     return [];
@@ -57,11 +102,7 @@ async function getFolderApps() {
 
 async function getReleaseApps() {
   try {
-    const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`;
-    const r = await fetch(url, {
-      headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'RemonStore' },
-      cache: 'no-store',
-    });
+    const r = await ghFetch(`/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`);
     if (!r.ok) return [];
     const release = await r.json();
     const assets = Array.isArray(release.assets) ? release.assets : [];
@@ -73,6 +114,8 @@ async function getReleaseApps() {
         name: prettyName(a.name),
         size: humanSize(a.size),
         url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/${a.name}`,
+        description: '',
+        screenshots: [],
         source: 'release',
       }));
   } catch (e) {
@@ -90,8 +133,6 @@ export default async function handler(req, res) {
       getReleaseApps(),
     ]);
 
-    // De-duplicate by name (in case the same app exists in both places),
-    // preferring the release version (usually the "real"/bigger one).
     const seen = new Set();
     const combined = [];
     for (const app of [...releaseApps, ...folderApps]) {
