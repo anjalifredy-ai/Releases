@@ -1,6 +1,7 @@
 // api/upload.js
-// Handles APK upload: checks PIN, then commits the file directly into
-// the GitHub repo (under apks/) using the GitHub Contents API.
+// Handles APK upload: checks PIN, then commits the APK (and optional
+// screenshots + a small metadata.json) directly into the GitHub repo
+// under apks/<app-folder>/ using the GitHub Contents API.
 // The GitHub token is read from a server-side environment variable
 // (GITHUB_TOKEN) — it is never present in any file the browser can see.
 
@@ -12,12 +13,12 @@ export const config = {
 
 const UPLOAD_PIN = "Remon b";
 
-// These identify where files get committed. Update if your repo/owner differ.
 const GITHUB_OWNER = "anjalifredy-ai";
 const GITHUB_REPO = "Releases";
 const GITHUB_BRANCH = "main";
 
-// --- tiny multipart/form-data parser (no external deps) ---
+// --- tiny multipart/form-data parser (no external deps), supports
+// multiple files under different or repeated field names ---
 async function parseMultipart(req) {
   const contentType = req.headers['content-type'] || '';
   const boundaryMatch = contentType.match(/boundary=(.+)$/);
@@ -30,7 +31,7 @@ async function parseMultipart(req) {
 
   const parts = buffer.toString('latin1').split(boundary).slice(1, -1);
   const fields = {};
-  let file = null;
+  const files = []; // { fieldName, filename, buffer }
 
   for (const part of parts) {
     const [rawHeaders, ...rest] = part.split('\r\n\r\n');
@@ -41,15 +42,15 @@ async function parseMultipart(req) {
     const filenameMatch = rawHeaders.match(/filename="([^"]+)"/);
     const name = nameMatch ? nameMatch[1] : null;
 
-    if (filenameMatch) {
+    if (filenameMatch && filenameMatch[1]) {
       const fileBuffer = Buffer.from(body, 'latin1');
-      file = { fieldName: name, filename: filenameMatch[1], buffer: fileBuffer };
+      files.push({ fieldName: name, filename: filenameMatch[1], buffer: fileBuffer });
     } else if (name) {
       fields[name] = body;
     }
   }
 
-  return { fields, file };
+  return { fields, files };
 }
 
 async function githubRequest(path, options = {}) {
@@ -65,7 +66,7 @@ async function githubRequest(path, options = {}) {
   return res;
 }
 
-async function putFile(path, base64Content, message, sha) {
+async function putFile(path, base64Content, message) {
   const res = await githubRequest(
     `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`,
     {
@@ -74,13 +75,12 @@ async function putFile(path, base64Content, message, sha) {
         message,
         content: base64Content,
         branch: GITHUB_BRANCH,
-        ...(sha ? { sha } : {}),
       }),
     }
   );
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`GitHub API error (${res.status}): ${errText}`);
+    throw new Error(`GitHub error saving ${path}: ${errText}`);
   }
   return res.json();
 }
@@ -97,37 +97,64 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { fields, file } = await parseMultipart(req);
+    const { fields, files } = await parseMultipart(req);
 
     if (!fields.pin || fields.pin !== UPLOAD_PIN) {
       res.status(401).json({ error: 'Wrong PIN' });
       return;
     }
-    if (!file) {
-      res.status(400).json({ error: 'No file uploaded' });
+
+    const apkFile = files.find(f => f.fieldName === 'file');
+    const screenshotFiles = files.filter(f => f.fieldName === 'screenshots');
+
+    if (!apkFile) {
+      res.status(400).json({ error: 'No APK file uploaded' });
       return;
     }
-    if (!file.filename.toLowerCase().endsWith('.apk')) {
+    if (!apkFile.filename.toLowerCase().endsWith('.apk')) {
       res.status(400).json({ error: 'Only .apk files are allowed' });
       return;
     }
+    if (screenshotFiles.length > 6) {
+      res.status(400).json({ error: 'Max 6 screenshots allowed' });
+      return;
+    }
 
-    const appName = (fields.appName || file.filename.replace(/\.apk$/i, '')).trim();
+    const appName = (fields.appName || apkFile.filename.replace(/\.apk$/i, '')).trim();
+    const description = (fields.description || '').trim();
+    const folderSlug = `${Date.now()}-${appName.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+    const baseDir = `apks/${folderSlug}`;
 
-    // Commit the APK file into apks/ in the repo.
-    // apps.js scans this folder directly, so no separate index bookkeeping needed.
-    const safeName = `${Date.now()}-${appName.replace(/[^a-zA-Z0-9.\-_]/g, '_')}.apk`;
-    const apkPath = `apks/${safeName}`;
-    const base64Content = file.buffer.toString('base64');
+    // 1. Commit the APK
+    const apkPath = `${baseDir}/${apkFile.filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+    await putFile(apkPath, apkFile.buffer.toString('base64'), `Add ${appName} via RemonStore upload`);
+    const rawApkUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${apkPath}`;
 
-    await putFile(apkPath, base64Content, `Add ${appName} via RemonStore upload`);
+    // 2. Commit screenshots (if any), sequentially to keep GitHub API happy
+    const screenshotUrls = [];
+    for (let i = 0; i < screenshotFiles.length; i++) {
+      const shot = screenshotFiles[i];
+      const ext = (shot.filename.match(/\.(jpg|jpeg|png|webp)$/i) || ['.jpg'])[0];
+      const shotPath = `${baseDir}/screenshots/${i + 1}${ext}`;
+      await putFile(shotPath, shot.buffer.toString('base64'), `Add screenshot ${i + 1} for ${appName}`);
+      screenshotUrls.push(`https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${shotPath}`);
+    }
 
-    const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${apkPath}`;
-    const sizeMB = (file.buffer.length / (1024 * 1024)).toFixed(2) + ' MB';
+    // 3. Commit a small metadata.json alongside the APK (description, screenshots)
+    const sizeMB = (apkFile.buffer.length / (1024 * 1024)).toFixed(2) + ' MB';
+    const metadata = {
+      name: appName,
+      description,
+      size: sizeMB,
+      screenshots: screenshotUrls,
+      uploadedAt: new Date().toISOString(),
+    };
+    const metaPath = `${baseDir}/metadata.json`;
+    await putFile(metaPath, Buffer.from(JSON.stringify(metadata, null, 2)).toString('base64'), `Add metadata for ${appName}`);
 
     res.status(200).json({
       success: true,
-      app: { name: appName, size: sizeMB, url: rawUrl },
+      app: { name: appName, size: sizeMB, url: rawApkUrl, description, screenshots: screenshotUrls },
     });
   } catch (err) {
     console.error(err);
